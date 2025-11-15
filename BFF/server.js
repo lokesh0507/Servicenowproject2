@@ -25,7 +25,6 @@ const CLIENT_SECRET = process.env.CLIENT_SECRET;
 const authEndpoint = `${SN_INTANCE}/oauth_auth.do`;
 const tokenEndpoint = `${SN_INTANCE}/oauth_token.do`;
 
-
 const tokenStore = new Map();
 
 function base64url(buf) {
@@ -117,8 +116,7 @@ app.get("/api/incidents", async (req, res) => {
   if (!session.access_token) return res.status(401).send("Not authenticated");
 
   try {
-    const r = await axios.get(
-      `${SN_INTANCE}/api/now/table/incident?sysparm_display_value=true&sysparm_fields=sys_id%2Cnumber%2Cstate%2Cpriority%2Cshort_description`,
+    const r = await axios.get(`${SN_INTANCE}/api/now/table/incident?sysparm_fields=short_description%2Cpriority%2Cimpact%2Curgency%2cstate%2Cnumber%2Csys_id`,
       {
         headers: { Authorization: `Bearer ${session.access_token}` },
       }
@@ -139,13 +137,12 @@ app.get("/api/incidents", async (req, res) => {
 
         tokenStore.set(sid, { ...session, ...refresh.data });
 
-        const retry = await axios.get(
-          `${SN_INTANCE}/api/now/table/incident?sysparm_display_value=true&sysparm_fields=number%2Cstate%2Cpriority%2Cshort_description`,
-          {
-            headers: { Authorization: `Bearer ${session.access_token}` },
-          }
-        );
-        res.json(r.data);
+        const retry = await axios.get(`${SN_INTANCE}/api/now/table/incident?sysparm_fields=sys_id%2Cnumber%2Cstate%2Cpriority%2Cshort_description`,
+            {
+              headers: { Authorization: `Bearer ${session.access_token}` },
+            }
+          );
+          res.json(retry.data);
       } catch (e) {
         res.status(401).send("Session Expired");
       }
@@ -153,6 +150,8 @@ app.get("/api/incidents", async (req, res) => {
     }
   }
 });
+
+
 app.delete("/api/incidents/:sys_id", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
@@ -175,7 +174,6 @@ app.delete("/api/incidents/:sys_id", async (req, res) => {
  
   } catch (e) {
  
-    
     if (e.response?.status === 401 && session.refresh_token) {
       try {
         const data = {
@@ -208,6 +206,7 @@ app.delete("/api/incidents/:sys_id", async (req, res) => {
     return res.status(e.response?.status || 500).send("Upstream error");
   }
 });
+
 app.post("/api/incidents", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
@@ -217,8 +216,7 @@ app.post("/api/incidents", async (req, res) => {
   const { impact, urgency, short_description } = req.body;
  
   try {
-    const r = await axios.post(
-      `${SN_INTANCE}/api/now/table/incident`,
+    const r = await axios.post(`${SN_INTANCE}/api/now/table/incident`,
       {
         impact,
         urgency,
@@ -239,38 +237,114 @@ app.post("/api/incidents", async (req, res) => {
   }
 });
 
+
+// app.put("/api/incidents/:sys_id", async (req, res) => {
+//   const sid = req.cookies.sid;
+//   const session = tokenStore.get(sid);
+//   if (!session || !session.access_token)
+//     return res.status(401).send("Not authenticated");
+ 
+//   const { sys_id } = req.params;
+//   const { impact, urgency, short_description } = req.body;
+ 
+//   try {
+//     const r = await axios.patch(${SN_INTANCE}/api/now/table/incident/${sys_id},
+//       {
+//         impact,
+//         urgency,
+//         short_description,
+//       },
+//       { headers: { Authorization: Bearer ${session.access_token} } }
+//     );
+ 
+//     res.json({
+//       message: "Incident updated successfully",
+//       result: r.data.result,
+//     });
+//   } catch (e) {
+//     console.error("Update failed:", e.response?.data || e.message);
+//     res
+//       .status(e.response?.status || 500)
+//       .send(e.response?.data?.error?.message || "Failed to update incident");
+//   }
+// });
 app.put("/api/incidents/:sys_id", async (req, res) => {
   const sid = req.cookies.sid;
   const session = tokenStore.get(sid);
-  if (!session || !session.access_token)
+  if (!session || !session.access_token) {
     return res.status(401).send("Not authenticated");
+  }
  
   const { sys_id } = req.params;
-  const { impact, urgency, short_description } = req.body;
+  const { impact, urgency, short_description, status } = req.body;
+ 
+  // Map status to state for ServiceNow API
+  const payload = {
+    impact,
+    urgency,
+    short_description,
+    state: status  // ServiceNow uses 'state' not 'status'
+  };
  
   try {
     const r = await axios.patch(
       `${SN_INTANCE}/api/now/table/incident/${sys_id}`,
+      payload,
       {
-        impact,
-        urgency,
-        short_description,
-      },
-      { headers: { Authorization: `Bearer ${session.access_token}` } }
+        headers: {
+          Authorization: `Bearer ${session.access_token}`,
+          "Content-Type": "application/json"
+        }
+      }
     );
  
-    res.json({
+    return res.json({
       message: "Incident updated successfully",
       result: r.data.result,
     });
   } catch (e) {
+    // Handle token refresh on 401 error
+    if (e.response?.status === 401 && session.refresh_token) {
+      try {
+        const data = {
+          grant_type: "refresh_token",
+          refresh_token: session.refresh_token,
+          client_id: CLIENT_ID,
+        };
+ 
+        const refresh = await axios.post(tokenEndpoint, stringify(data), {
+          headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        });
+ 
+        tokenStore.set(sid, { ...session, ...refresh.data });
+ 
+        // Retry PATCH request with new token
+        const r2 = await axios.patch(
+          `${SN_INTANCE}/api/now/table/incident/${sys_id}`,
+          payload,
+          {
+            headers: {
+              Authorization: `Bearer ${refresh.data.access_token}`,
+              "Content-Type": "application/json"
+            }
+          }
+        );
+ 
+        return res.json({
+          message: "Incident updated successfully",
+          result: r2.data.result,
+        });
+      } catch (refreshError) {
+        return res.status(401).send("Session Expired");
+      }
+    }
+ 
     console.error("Update failed:", e.response?.data || e.message);
-    res
+    return res
       .status(e.response?.status || 500)
       .send(e.response?.data?.error?.message || "Failed to update incident");
   }
 });
-
-
+ 
 
 app.listen(3001, () => console.log("BFF on 3001"));
