@@ -253,16 +253,26 @@ export default function Home() {
             >
               {editing ? "Update Incident" : "Insert Incident"}
             </Button>
+                
 
-            <TextField
-              label="Search Incidents"
-              placeholder="Search By Inc/short Description/priority"
-              variant="outlined"
-              size="small"
-              value={search}
-              onChange={(e) => setSearch(e.target.value)}
-              sx={{width: 300}}
-            />
+            <Box
+  sx={{
+    width: "100%",
+    display: "flex",
+    justifyContent: "center",
+    mt: 3,
+  }}
+>
+  <TextField
+    label="Search Incidents"
+    placeholder="Search By Inc/short Description/priority"
+    variant="outlined"
+    size="small"
+    value={search}
+    onChange={(e) => setSearch(e.target.value)}
+    sx={{ width: 350 }}
+  />
+</Box>
           </Box>
 
           
